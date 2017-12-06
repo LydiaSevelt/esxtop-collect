@@ -1,11 +1,11 @@
-Possible metrics to collect:
+# Possible Metrics to Collect:
 
-Physical Cpu Load
+# Physical Cpu Load
 	Cpu Load (1 Minute Avg)
 	Cpu Load (5 Minute Avg)
 	Cpu Load (15 Minute Avg)
 
-Vcpu
+# Vcpu
 	Alloc Max
 	Alloc Min
 	Alloc Min Limited
@@ -31,7 +31,7 @@ Vcpu
 	% Wait
 	Wakeups/sec
 
-Network Port
+# Network Port
 	Actions Posted/sec
 	Broadcast Packets Received/sec
 	Broadcast Packets Transmitted/sec
@@ -47,7 +47,7 @@ Network Port
 	Packets Transmitted/sec
 	% Received Packets Dropped
 
-Virtual Disk
+# Virtual Disk
 	Average MilliSec/Read
 	Average MilliSec/Write
 	Commands/sec
@@ -56,7 +56,7 @@ Virtual Disk
 	Reads/sec
 	Writes/sec
 
-Physical Disk Adapter
+# Physical Disk Adapter
 	Aborts/sec
 	Average Driver MilliSec/Command
 	Average Driver MilliSec/Read
@@ -89,7 +89,7 @@ Physical Disk Adapter
 	Split Copies/sec
 	Writes/sec
 
-Group Memory
+# Group Memory
 	% Active Estimate
 	% Active Fast Estimate
 	% Active Next Estimate
@@ -143,7 +143,7 @@ Group Memory
 	VMM Overhead Memory on Numa Node 3
 	Zero MBytes
 
-Memory
+# Memory
 	Free MBytes
 	Kernel Managed MBytes
 	Kernel MBytes
