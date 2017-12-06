@@ -10,6 +10,17 @@ import os
 p = 0
 influxdb_server = 'changeme.localnetwork.address'
 influxdb_dbname = 'db_name_to_collect_to'
+
+# See file CollectableMetrics.md to see what metrics are available for each category
+metrics_collect = { 'Physical Cpu Load':[ 'Cpu Load (1 Minute Avg)' ], \
+			'Vcpu':[ '% Used', '% Run', '% VmWait', '% Ready', '% CoStop' ], \
+			'Network Port':[ 'MBits Transmitted/sec', 'MBits Received/sec', '% Outbound Packets Dropped', '% Received Packets Dropped' ], \
+			'Virtual Disk':[ 'MBytes Read/sec', 'MBytes Written/sec' ], \
+			'Physical Disk Adapter':[ 'MBytes Read/sec', 'MBytes Written/sec', 'Average Driver MilliSec/Command', 'Average Kernel MilliSec/Command', 'Average Guest MilliSec/Command', 'Average Queue MilliSec/Command' ], \
+			'Group Memory':[ 'Swap Read MBytes/sec', 'Swap Written MBytes/sec', 'Memory Granted Size MBytes' ], \
+			'Memory':[ 'Memory Overcommit (1 Minute Avg)', 'Swap MBytes Read/sec', 'Swap MBytes Write/sec', 'PShare Shared MBytes', 'PShare Savings MBytes' ]
+		}
+
 data = ''
 def sigterm_handler(_signo, _stack_frame):
 	print "Received signal", _signo
@@ -20,6 +31,9 @@ def sigterm_handler(_signo, _stack_frame):
 	exit(0)
 signal.signal(signal.SIGTERM, sigterm_handler)
 timezone = timedelta(hours=3)
+# Override Hostname
+# if ohostname is None then use hostname from esxtop
+ohostname = None
 
 
 def main ():
@@ -27,7 +41,7 @@ def main ():
 	#print "start 5 minute cycle"
 	p = Popen(['/bin/esxtop', '-b', '-l'
 	, '-n', '61' # 5 mins + 1 dummy iteration
-	], bufsize=1, stdout=PIPE)#, stdout=PIPE)
+	], bufsize=1, stdout=PIPE)
 	start = False
 	first_line_dropped = False
 	head = []
@@ -40,7 +54,8 @@ def main ():
 			if first_line_dropped:
 				date = datetime.strptime(line[0], '"%m/%d/%Y %H:%M:%S"') #+ timezone
 				date = int(mktime(date.timetuple())) * 1000000000
-				for i in indexes: 
+				for i in indexes:
+					#print `head[i]` 
 					data += "%s,%s value=%s %s\n" % (head[i]['metric'], head[i]['tags'], line[i].replace('"', ''), date)
 				for i_vm in vcpuindexes: 
 					for i_vcpu in vcpuindexes[i_vm]: 
@@ -49,7 +64,12 @@ def main ():
 						for i_vstat in vcpuindexes[i_vm][i_vcpu]: 
 							values += '%s%s=%s' % (delim, i_vstat, line[vcpuindexes[i_vm][i_vcpu][i_vstat]].replace('"', ''))
 							delim = ','
-						data += "vcpu,host=%s,vm=%s,vcpu=%s %s %s\n" % (head[vcpuindexes[i_vm][i_vcpu][i_vstat]]['host'],i_vm, i_vcpu, values, date)
+						if ohostname:
+							hostname = ohostname
+						else:
+							hostname = head[vcpuindexes[i_vm][i_vcpu][i_vstat]]['host']
+						data += "vcpu,host=%s,vm=%s,vcpu=%s %s %s\n" % (hostname, i_vm, i_vcpu, values, date)
+				#print `data`
 				writedata()
 			else:
 				first_line_dropped = True
@@ -64,22 +84,88 @@ def main ():
 				# 1 - hostname ; 2 - stat type ; 3- object ; 4 - metric name
 				if m:
 					if m.group(2) == "Virtual Disk" and m.group(3).find(':') > 0:
-						start = True
-						indexes.append(i)
-						# 3 - servername:device name
-						s = m.group(3).replace(' ', '\\ ').split(':', 1)
-						head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
-									'tags' : "stat_type=%s,host=%s,vm=%s,device=%s" % (m.group(2).replace(' ', '\\ '), m.group(1).replace(' ', '\\ '), s[0], s[1])}
-					elif m.group(2) == "Network Port":
-						start = True
-						indexes.append(i)
-						# 3 - vswitch:...:...:device name
-						s = m.group(3).replace(' ', '\\ ').split(':')
-						head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
-									'tags' : "stat_type=%s,host=%s,switch=%s,device=%s" % (m.group(2).replace(' ', '\\ '), m.group(1).replace(' ', '\\ '), s[0], s[-1])}
-					elif m.group(2) == "Vcpu" and m.group(3).find('vmx-vcpu') > 0:
+						if m.group(4) in metrics_collect['Virtual Disk']:
 							start = True
-					#		indexes.append(i)
+							indexes.append(i)
+							# 3 - servername:device name
+							s = m.group(3).replace(' ', '\\ ').split(':', 1)
+							if ohostname:
+								hostname = ohostname
+							else:
+								hostname = m.group(1).replace(' ', '\\ ')
+							head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
+										'tags' : "stat_type=%s,host=%s,vm=%s,device=%s" % (m.group(2).replace(' ', '\\ '), hostname, s[0], s[1])}
+					elif m.group(2) == "Network Port":
+						if m.group(4) in metrics_collect['Network Port']:
+							start = True
+							indexes.append(i)
+							# 3 - vswitch:...:...:device name
+							s = m.group(3).replace(' ', '\\ ').split(':')
+							if ohostname:
+								hostname = ohostname
+							else:
+								hostname = m.group(1).replace(' ', '\\ ')
+
+							head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
+										'tags' : "stat_type=%s,host=%s,switch=%s,device=%s" % (m.group(2).replace(' ', '\\ '), hostname, s[0], s[-1])}
+					elif m.group(2) == "Group Memory":
+						if m.group(4) in metrics_collect['Group Memory']:
+							# 3 - group id : vmname/process name . PID (if process)
+							# examples:  46414637:vmname
+							#            5171:openwsmand.36067
+							s = m.group(3).replace(' ', '\\ ').split(':', 1)
+							# ***BUG***
+							# This will match anything that ends with a dot followed by only digits at the end of the line.
+							# If users name their vms like linuxbox.123 then these will match and be considered processes and ignored
+							# without trying to collect and match a valid list of real VMs on the host I don't see a quick fix for this
+							# I'll try to come back later and fix it, but right now this works well enough for me. Sorry.
+							if not re.match("^.*\.[0-9]+$", s[-1]):
+								# This is a VM, continue to actually process this line
+								start = True
+								indexes.append(i)
+								if ohostname:
+									hostname = ohostname
+								else:
+									hostname = m.group(1).replace(' ', '\\ ')
+								head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
+										'tags' : "stat_type=%s,host=%s,vm=%s" % (m.group(2).replace(' ', '\\ '), hostname, s[-1])}
+					elif m.group(2) == "Physical Disk Adapter":
+						if m.group(4) in metrics_collect['Physical Disk Adapter']:
+							start = True
+							indexes.append(i)
+							# 3 - vmhba
+							s = m.group(3).replace(' ', '\\ ').split(':')
+							if ohostname:
+								hostname = ohostname
+							else:
+								hostname =  m.group(1).replace(' ', '\\ ')
+							head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
+										'tags' : "stat_type=%s,host=%s,device=%s" % (m.group(2).replace(' ', '\\ '), hostname, s[0])}
+					elif m.group(2) == "Memory":
+						if m.group(4) in metrics_collect['Memory']:
+							start = True
+							indexes.append(i)
+							# 3 - NULL
+							if ohostname:
+								hostname = ohostname
+							else:
+								hostname =  m.group(1).replace(' ', '\\ ')
+							head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
+										'tags' : "stat_type=%s,host=%s" % (m.group(2).replace(' ', '\\ '), hostname)}
+					elif m.group(2) == "Physical Cpu Load":
+						if m.group(4) in metrics_collect['Physical Cpu Load']:
+							start = True
+							indexes.append(i)
+							# 3 - NULL
+							if ohostname:
+								hostname = ohostname
+							else:
+								hostname =  m.group(1).replace(' ', '\\ ')
+							head[i] = {'metric' : m.group(4).replace(' ', '\\ '),
+										'tags' : "stat_type=%s,host=%s" % (m.group(2).replace(' ', '\\ '), hostname)}
+					elif m.group(2) == "Vcpu" and m.group(3).find('vmx-vcpu') > 0:
+						if m.group(4) in metrics_collect['Vcpu']:
+							start = True
 					#		# ...:vmname:...:cpu num:vmname
 							s = m.group(3).replace(':vmx-', ':').replace(' ', '\\ ').split(':')
 							if not vcpuindexes.has_key(s[-1]):
@@ -87,8 +173,11 @@ def main ():
 							if not vcpuindexes[s[-1]].has_key(s[-2]):
 								vcpuindexes[s[-1]][s[-2]] = {}
 							vcpuindexes[s[-1]][s[-2]][m.group(4).replace('% ', '').replace(' ', '')] = i
-							head[i] = {'host' : m.group(1).replace(' ', '\\ ')}
-							
+							if ohostname:
+								hostname = ohostname
+							else:
+								hostname = m.group(1).replace(' ', '\\ ')
+							head[i] = {'host' : hostname}
 	#print data
 	#print "end 5 minute cycle"
 	#writedata()
@@ -98,7 +187,7 @@ def writedata():
 	global data
 	try:
 		#print data
-		#print "wrining " + str(len(data))
+		#print "writing " + str(len(data))
 		r = urllib2.Request('http://%s/write?db=%s' % (influxdb_server, influxdb_dbname), data)#, {'Content-Type': 'application/octet-stream'})
 		r.add_header('Content-Length', '%d' % len(data))
 		r.add_header('Content-Type', 'application/octet-stream')
@@ -109,7 +198,6 @@ def writedata():
 		print "Data buffer len:" + str(len(data))
 	if len(data) > 104857600: # 100MB
 		data = ''
-
 
 
 if __name__ == "__main__":
